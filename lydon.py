@@ -28,7 +28,7 @@ def transform(source, width=None, height=None, format='jpg'):
     im = Image.open(_get_source_file(source))
     im.thumbnail([height, width], Image.ANTIALIAS)
 
-    out_path = os.path.join(get_working_directory(), 'output', source, '%sx%s.%s' % (width, height, format))
+    out_path = os.path.join(_get_working_directory(), 'output', source, '%sx%s.%s' % (width, height, format))
     out_dir = os.path.dirname(out_path)
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
