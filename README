@@ -1,0 +1,8 @@
+Lydon
+-----
+Generate thumbnails on the fly.
+
+
+
+Installation:
+pip install -r REQUIREMENTS

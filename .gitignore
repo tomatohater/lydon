@@ -1,0 +1,4 @@
+*.kpf
+*.pyc
+local.wsgi
+settings_local.py
