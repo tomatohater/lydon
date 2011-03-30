@@ -1,4 +1,5 @@
 from flask import Flask, request, send_file, abort
+from werkzeug import secure_filename
 
 app = Flask(__name__)
 app.config.from_object('settings')
@@ -43,6 +44,31 @@ def original(source):
     return _push_file(path,
                       EXT_TO_MIMETYPE[FORMAT_TO_EXT[image.format]],
                       _get_image_headers(image))
+
+
+@app.route('/<path:source>', methods=['POST', 'PUT',])
+def create_or_update(source):
+    s3 = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
+                         app.config['AWS_SECRET_ACCESS_KEY'])
+    bucket = s3.get_bucket(app.config['AWS_BUCKET'])
+    
+    file = request.files['file']
+    filename = secure_filename(file.filename)
+    
+    object = bucket.new_key(filename)
+    object.set_contents_from_file(file)
+    
+    return 'Created', 201
+
+
+@app.route('/<path:source>', methods=['DELETE',])
+def delete(source):
+    s3 = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
+                         app.config['AWS_SECRET_ACCESS_KEY'])
+    bucket = s3.get_bucket(app.config['AWS_BUCKET'])
+    bucket.delete_key(source)
+
+    return '', 204
 
 
 @app.route('/<path:source>-resized-<int:width>x', methods=['GET',])
@@ -170,6 +196,8 @@ def _get_image_headers(image):
     """
     aspect = _reduce_fraction(image.size[0], image.size[1])
     return {
+        'X-Pixel-Width': image.size[0],
+        'X-Pixel-Height': image.size[1],
         'X-Aspect-Ratio': '%sx%s' % (aspect[0], aspect[1]),
     }
 
