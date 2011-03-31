@@ -6,6 +6,7 @@ app.config.from_object('settings')
 app.config.from_envvar('LYDON_SETTINGS')
 
 import os
+import shutil
 import boto
 from PIL import Image
 
@@ -34,20 +35,23 @@ def index():
            'ge_dywf_wuxga.jpg" style="height: 500px;" />', 200
 
 
-@app.route('/<path:source>', methods=['GET',])
-def original(source):
+@app.route('/<path:resource>', methods=['GET',])
+def original(resource):
     """
-    With no qualifiers, just returns source object... with enhanced headers.
+    With no qualifiers, just returns resource object... with enhanced headers.
     """
-    path = _get_source_file(source)
+    path = _get_resource_file(resource)
     image = Image.open(path)
     return _push_file(path,
                       EXT_TO_MIMETYPE[FORMAT_TO_EXT[image.format]],
                       _get_image_headers(image))
 
 
-@app.route('/<path:source>', methods=['POST', 'PUT',])
-def create_or_update(source):
+@app.route('/<path:resource>', methods=['POST', 'PUT',])
+def create_or_update(resource):
+    """
+    Creates or updates resource. Purges cache if update.
+    """
     s3 = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
                          app.config['AWS_SECRET_ACCESS_KEY'])
     bucket = s3.get_bucket(app.config['AWS_BUCKET'])
@@ -61,47 +65,60 @@ def create_or_update(source):
     return 'Created', 201
 
 
-@app.route('/<path:source>', methods=['DELETE',])
-def delete(source):
+@app.route('/<path:resource>', methods=['DELETE',])
+def delete(resource):
+    """
+    Deletes resource and any derivatives from system (and cache).
+    """
     s3 = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
                          app.config['AWS_SECRET_ACCESS_KEY'])
     bucket = s3.get_bucket(app.config['AWS_BUCKET'])
-    bucket.delete_key(source)
+    bucket.delete_key(resource)
+    
+    os.unlink(os.path.join(_get_working_directory(), 'originals', resource))
+    
+    for item in os.listdir(os.path.join(_get_working_directory(), 'derivatives')):
+        path = os.path.join(os.path.join(_get_working_directory(), 'derivatives'), item)
+        try:
+            if os.path.isfile(path) and item.startswith(resource):
+                os.unlink(path)
+        except Exception, e:
+            print e
 
     return '', 204
 
 
-@app.route('/<path:source>-resized-<int:width>x', methods=['GET',])
-@app.route('/<path:source>-resized-x<int:height>', methods=['GET',])
-@app.route('/<path:source>-resized-<int:width>x<int:height>', methods=['GET',])
-@app.route('/<path:source>-resized-<int:width>x.<ext>', methods=['GET',])
-@app.route('/<path:source>-resized-x<int:height>.<ext>', methods=['GET',])
-@app.route('/<path:source>-resized-<int:width>x<int:height>.<ext>',
+@app.route('/<path:resource>-resized-<int:width>x', methods=['GET',])
+@app.route('/<path:resource>-resized-x<int:height>', methods=['GET',])
+@app.route('/<path:resource>-resized-<int:width>x<int:height>', methods=['GET',])
+@app.route('/<path:resource>-resized-<int:width>x.<ext>', methods=['GET',])
+@app.route('/<path:resource>-resized-x<int:height>.<ext>', methods=['GET',])
+@app.route('/<path:resource>-resized-<int:width>x<int:height>.<ext>',
            methods=['GET',])
-def resize(source, width=None, height=None, ext=None):
+def resize(resource, width=None, height=None, ext=None):
     """
-    Resizes source object per specified qualifiers.
+    Resizes resource object per specified qualifiers.
     """
-    return _rescale(source, width, height, ext, False)
+    return _rescale(resource, width, height, ext, False)
     
 
-@app.route('/<path:source>-cropped-<int:width>x<int:height>', methods=['GET',])
-@app.route('/<path:source>-cropped-<int:width>x<int:height>.<ext>',
+@app.route('/<path:resource>-cropped-<int:width>x<int:height>', methods=['GET',])
+@app.route('/<path:resource>-cropped-<int:width>x<int:height>.<ext>',
            methods=['GET',])
-def crop(source, width=None, height=None, ext=None):
+def crop(resource, width=None, height=None, ext=None):
     """
-    Resizes and crops source object per specified qualifiers.
+    Resizes and crops resource object per specified qualifiers.
     """
-    return _rescale(source, width, height, ext, True)
+    return _rescale(resource, width, height, ext, True)
     
     
-def _rescale(source, width=None, height=None, ext=None, force=False):
+def _rescale(resource, width=None, height=None, ext=None, force=False):
     """
     Rescales the given image, optionally cropping it to make sure the result
     image has the specified width and height.
     (http://djangosnippets.org/snippets/224/)
     """
-    image, width, height, ext = _populate_inputs(source, width, height, ext)
+    image, width, height, ext = _populate_inputs(resource, width, height, ext)
     
     max_width = width
     max_height = height
@@ -128,7 +145,7 @@ def _rescale(source, width=None, height=None, ext=None, force=False):
                             y_offset+int(crop_height)))
         image = image.resize((dst_width, dst_height), Image.ANTIALIAS)
 
-    path = os.path.join(_get_working_directory(), 'output', request.path[1:])
+    path = os.path.join(_get_working_directory(), 'derivatives', request.path[1:])
     dir = os.path.dirname(path)
     if not os.path.exists(dir):
         os.makedirs(dir)
@@ -138,11 +155,11 @@ def _rescale(source, width=None, height=None, ext=None, force=False):
     return _push_file(path, EXT_TO_MIMETYPE[ext], _get_image_headers(image))
     
 
-def _populate_inputs(source, width=None, height=None, ext=None):
+def _populate_inputs(resource, width=None, height=None, ext=None):
     """
     Populates missing inputs with original values.
     """
-    image = Image.open(_get_source_file(source))
+    image = Image.open(_get_resource_file(resource))
 
     width = width or image.size[0]
     height = height or image.size[1]
@@ -151,18 +168,18 @@ def _populate_inputs(source, width=None, height=None, ext=None):
     return image, width, height, ext
 
 
-def _get_source_file(source):
+def _get_resource_file(resource):
     """
-    Pulls source file from S3 into working directory.
+    Pulls resource file from S3 into working directory.
     """
-    path = _get_local_file_path(source)
+    path = _get_local_file_path(resource)
     if os.path.exists(path):
         return path
 
     s3 = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
                          app.config['AWS_SECRET_ACCESS_KEY'])
     bucket = s3.get_bucket(app.config['AWS_BUCKET'])
-    key = bucket.get_key(source)
+    key = bucket.get_key(resource)
 
     if not key:
         abort(404)
@@ -176,11 +193,11 @@ def _get_source_file(source):
     return path
 
 
-def _get_local_file_path(source):
+def _get_local_file_path(resource):
     """
-    Builds a file path for local copy of source file.
+    Builds a file path for local copy of resource file.
     """
-    return os.path.join(_get_working_directory(), 'original', source)
+    return os.path.join(_get_working_directory(), 'originals', resource)
 
 
 def _get_working_directory():
