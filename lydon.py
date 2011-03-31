@@ -62,6 +62,8 @@ def create_or_update(resource):
     object = bucket.new_key(filename)
     object.set_contents_from_file(file)
     
+    _flush(resource)
+    
     return 'Created', 201
 
 
@@ -74,17 +76,7 @@ def delete(resource):
                          app.config['AWS_SECRET_ACCESS_KEY'])
     bucket = s3.get_bucket(app.config['AWS_BUCKET'])
     bucket.delete_key(resource)
-    
-    os.unlink(os.path.join(_get_working_directory(), 'originals', resource))
-    
-    for item in os.listdir(os.path.join(_get_working_directory(), 'derivatives')):
-        path = os.path.join(os.path.join(_get_working_directory(), 'derivatives'), item)
-        try:
-            if os.path.isfile(path) and item.startswith(resource):
-                os.unlink(path)
-        except Exception, e:
-            print e
-
+    _flush(resource)
     return '', 204
 
 
@@ -217,6 +209,27 @@ def _get_image_headers(image):
         'X-Pixel-Height': image.size[1],
         'X-Aspect-Ratio': '%sx%s' % (aspect[0], aspect[1]),
     }
+
+
+def _flush(resource):
+    queue = ['lydon/%s' % resource,]
+    
+    try:
+        os.unlink(os.path.join(_get_working_directory(), 'originals', resource))
+    except Exception, e:
+        pass
+    
+    for item in os.listdir(os.path.join(_get_working_directory(), 'derivatives')):
+        path = os.path.join(os.path.join(_get_working_directory(), 'derivatives'), item)
+        try:
+            if os.path.isfile(path) and item.startswith(resource):
+                queue.append('lydon/%s' % item)
+                os.unlink(path)
+        except Exception, e:
+            pass
+
+    cloudfront = boto.connect_cloudfront(app.config['AWS_ACCESS_KEY_ID'], app.config['AWS_SECRET_ACCESS_KEY'])
+    cloudfront.create_invalidation_request(app.config['AWS_DISTRIBUTION_ID'], queue)
 
 
 def _push_file(path, mimetype, headers=None):
