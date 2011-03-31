@@ -80,9 +80,6 @@ def delete(resource):
     return '', 204
 
 
-@app.route('/<path:resource>-resized-<int:width>x', methods=['GET',])
-@app.route('/<path:resource>-resized-x<int:height>', methods=['GET',])
-@app.route('/<path:resource>-resized-<int:width>x<int:height>', methods=['GET',])
 @app.route('/<path:resource>-resized-<int:width>x.<ext>', methods=['GET',])
 @app.route('/<path:resource>-resized-x<int:height>.<ext>', methods=['GET',])
 @app.route('/<path:resource>-resized-<int:width>x<int:height>.<ext>',
