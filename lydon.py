@@ -91,7 +91,6 @@ def resize(resource, width=None, height=None, ext=None):
     return _rescale(resource, width, height, ext, False)
     
 
-@app.route('/<path:resource>-cropped-<int:width>x<int:height>', methods=['GET',])
 @app.route('/<path:resource>-cropped-<int:width>x<int:height>.<ext>',
            methods=['GET',])
 def crop(resource, width=None, height=None, ext=None):
