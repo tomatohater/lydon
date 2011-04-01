@@ -1,12 +1,13 @@
+"""
+Generate thumbnails on the fly.
+"""
 from flask import Flask, request, send_file, abort
-from werkzeug import secure_filename
 
 app = Flask(__name__)
 app.config.from_object('settings')
 app.config.from_envvar('LYDON_SETTINGS')
 
 import os
-import shutil
 import boto
 from PIL import Image
 
@@ -27,7 +28,7 @@ EXT_TO_MIMETYPE = {
 }
 
 
-@app.route('/', methods=['GET',])
+@app.route('/', methods=['GET', ])
 def index():
     """Welcome page. Just for kicks. Does absolutely nothing."""
     return '<img src="http://media.digitalphotogallery.com/fvwxvyxzsjud/ima' \
@@ -35,7 +36,7 @@ def index():
            'ge_dywf_wuxga.jpg" style="height: 500px;" />', 200
 
 
-@app.route('/<path:resource>', methods=['GET',])
+@app.route('/<path:resource>', methods=['GET', ])
 def original(resource):
     """
     With no qualifiers, just returns resource object... with enhanced headers.
@@ -47,43 +48,40 @@ def original(resource):
                       _get_image_headers(image))
 
 
-@app.route('/<path:resource>', methods=['POST', 'PUT',])
+@app.route('/<path:resource>', methods=['POST', 'PUT', ])
 def create_or_update(resource):
     """
     Creates or updates resource. Purges cache if update.
     """
-    s3 = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
+    sss = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
                          app.config['AWS_SECRET_ACCESS_KEY'])
-    bucket = s3.get_bucket(app.config['AWS_BUCKET'])
+    bucket = sss.get_bucket(app.config['AWS_BUCKET'])
     
-    file = request.files['file']
-    filename = secure_filename(file.filename)
-    
-    object = bucket.new_key(filename)
-    object.set_contents_from_file(file)
+    obj = bucket.new_key(resource)
+    obj.set_contents_from_file(request.files['file'])
     
     _flush(resource)
     
     return 'Created', 201
 
 
-@app.route('/<path:resource>', methods=['DELETE',])
+@app.route('/<path:resource>', methods=['DELETE', ])
 def delete(resource):
     """
     Deletes resource and any derivatives from system (and cache).
     """
-    s3 = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
+    sss = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
                          app.config['AWS_SECRET_ACCESS_KEY'])
-    bucket = s3.get_bucket(app.config['AWS_BUCKET'])
+    bucket = sss.get_bucket(app.config['AWS_BUCKET'])
     bucket.delete_key(resource)
     _flush(resource)
     return '', 204
 
 
-@app.route('/<path:resource>-resized-<int:width>x.<ext>', methods=['GET',])
-@app.route('/<path:resource>-resized-x<int:height>.<ext>', methods=['GET',])
+@app.route('/<path:resource>-resized-<int:width>x.<ext>', methods=['GET', ])
+@app.route('/<path:resource>-resized-x<int:height>.<ext>', methods=['GET', ])
 @app.route('/<path:resource>-resized-<int:width>x<int:height>.<ext>',
-           methods=['GET',])
+           methods=['GET', ])
 def resize(resource, width=None, height=None, ext=None):
     """
     Resizes resource object per specified qualifiers.
@@ -92,7 +90,7 @@ def resize(resource, width=None, height=None, ext=None):
     
 
 @app.route('/<path:resource>-cropped-<int:width>x<int:height>.<ext>',
-           methods=['GET',])
+           methods=['GET', ])
 def crop(resource, width=None, height=None, ext=None):
     """
     Resizes and crops resource object per specified qualifiers.
@@ -128,15 +126,16 @@ def _rescale(resource, width=None, height=None, ext=None, force=False):
             crop_width = src_width
             crop_height = crop_width / dst_ratio
             x_offset = 0
-            y_offset = float(src_height - crop_height) / 3
+            y_offset = float(src_height - crop_height) / 2
         image = image.crop((x_offset, y_offset, x_offset+int(crop_width),
                             y_offset+int(crop_height)))
         image = image.resize((dst_width, dst_height), Image.ANTIALIAS)
 
-    path = os.path.join(_get_working_directory(), 'derivatives', request.path[1:])
-    dir = os.path.dirname(path)
-    if not os.path.exists(dir):
-        os.makedirs(dir)
+    path = os.path.join(_get_working_directory(), 'derivatives',
+                        request.path[1:])
+    path_dir = os.path.dirname(path)
+    if not os.path.exists(path_dir):
+        os.makedirs(path_dir)
     
     image.save(path, EXT_TO_FORMAT[ext])
     
@@ -164,17 +163,17 @@ def _get_resource_file(resource):
     if os.path.exists(path):
         return path
 
-    s3 = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
+    sss = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
                          app.config['AWS_SECRET_ACCESS_KEY'])
-    bucket = s3.get_bucket(app.config['AWS_BUCKET'])
+    bucket = sss.get_bucket(app.config['AWS_BUCKET'])
     key = bucket.get_key(resource)
 
     if not key:
         abort(404)
 
-    dir = os.path.dirname(path)
-    if not os.path.exists(dir):
-        os.makedirs(dir)
+    path_dir = os.path.dirname(path)
+    if not os.path.exists(path_dir):
+        os.makedirs(path_dir)
 
     key.get_contents_to_filename(path)
 
@@ -208,24 +207,31 @@ def _get_image_headers(image):
 
 
 def _flush(resource):
-    queue = ['lydon/%s' % resource,]
+    """
+    Flushes local and cached versions of resource and derivatives.
+    """
+    queue = ['lydon/%s' % resource, ]
     
     try:
         os.unlink(os.path.join(_get_working_directory(), 'originals', resource))
-    except Exception, e:
+    except Exception, ex:
         pass
     
-    for item in os.listdir(os.path.join(_get_working_directory(), 'derivatives')):
-        path = os.path.join(os.path.join(_get_working_directory(), 'derivatives'), item)
+    for item in os.listdir(os.path.join(_get_working_directory(),
+                                        'derivatives')):
+        path = os.path.join(os.path.join(_get_working_directory(),
+                                         'derivatives'), item)
         try:
             if os.path.isfile(path) and item.startswith(resource):
                 queue.append('lydon/%s' % item)
                 os.unlink(path)
-        except Exception, e:
+        except Exception, ex:
             pass
 
-    cloudfront = boto.connect_cloudfront(app.config['AWS_ACCESS_KEY_ID'], app.config['AWS_SECRET_ACCESS_KEY'])
-    cloudfront.create_invalidation_request(app.config['AWS_DISTRIBUTION_ID'], queue)
+    #cloudfront = boto.connect_cloudfront(app.config['AWS_ACCESS_KEY_ID'],
+    #                                     app.config['AWS_SECRET_ACCESS_KEY'])
+    #cloudfront.create_invalidation_request(app.config['AWS_DISTRIBUTION_ID'],
+    #                                          queue)
 
 
 def _push_file(path, mimetype, headers=None):
@@ -239,23 +245,26 @@ def _push_file(path, mimetype, headers=None):
     return response
 
 
-def _reduce_fraction(n, d):
+def _reduce_fraction(numerator, denominator):
     """
-    Reduces fractions. n is the numerator and d the denominator.
+    Reduces fractions.
     """
-    def _gcd(n, d):
-        while d != 0:
-            t = d
-            d = n % d
-            n = t
-        return n
-    assert d != 0, 'integer division by zero'
-    assert isinstance(d, int), 'must be int'
-    assert isinstance(n, int), 'must be int'
-    greatest = _gcd(n, d)
-    n /= greatest
-    d /= greatest
-    return n, d
+    def _gcd(numerator, denominator):
+        """
+        Calculates greatest common denominator.
+        """
+        while denominator != 0:
+            temp = numerator
+            denominator = numerator % denominator
+            numerator = temp
+        return numerator
+    assert denominator != 0, 'integer division by zero'
+    assert isinstance(denominator, int), 'must be int'
+    assert isinstance(numerator, int), 'must be int'
+    greatest = _gcd(numerator, denominator)
+    numerator /= greatest
+    denominator /= greatest
+    return numerator, denominator
 
 
 if __name__ == '__main__':
