@@ -287,7 +287,7 @@ def _flush(resource):
         except Exception, ex:
             pass
 
-    if 'AWS_DISTRIBUTION_ID' in app.config:
+    if 'AWS_DISTRIBUTION_ID' in app.config and app.config['AWS_DISTRIBUTION_ID']:
         cloudfront = boto.connect_cloudfront(
             app.config['AWS_ACCESS_KEY_ID'],
             app.config['AWS_SECRET_ACCESS_KEY'])
