@@ -1,15 +1,19 @@
 """
 Generate thumbnails on the fly.
 """
+import os
+from functools import wraps
+
+import boto
+import oauth2 as oauth
 from flask import Flask, request, send_file, abort
+from werkzeug.exceptions import Unauthorized
+from PIL import Image
+
 
 app = Flask(__name__)
 app.config.from_object('settings')
 app.config.from_envvar('LYDON_SETTINGS')
-
-import os
-import boto
-from PIL import Image
 
 
 EXT_TO_FORMAT = {
@@ -28,6 +32,57 @@ EXT_TO_MIMETYPE = {
 }
 
 
+oauth_server = oauth.Server(
+    signature_methods={'HMAC-SHA1': oauth.SignatureMethod_HMAC_SHA1()}
+)
+
+def validate_two_legged_oauth():
+    """
+    Verify 2-legged oauth request. Parameters accepted as values in
+    "Authorization" header, or as a GET request or in a POST body.
+    """
+    auth_header = {}
+    if 'Authorization' in request.headers:
+        auth_header = {'Authorization': request.headers['Authorization']}
+ 
+    req = oauth.Request.from_request(
+        request.method,
+        request.url,
+        headers=auth_header,
+        parameters=dict([(k, v) for k, v in request.values.iteritems()]))
+ 
+    try:
+        oauth_server.verify_request(req,
+            _get_consumer(req.get_parameter('oauth_consumer_key')),
+            None)
+        return True
+    except oauth.Error, e:
+        raise Unauthorized(e)
+    except KeyError, e:
+        raise Unauthorized("You failed to supply the " \
+                           "necessary parameters (%s) to " \
+                           "properly authenticate" % e)
+    except Exception, e:
+        raise Unauthorized("You failed to supply the " \
+                           "necessary parameters to " \
+                           "properly authenticate")
+        
+
+def _get_consumer(key):
+    for c in app.config["LYDON_OAUTH_KEYS"]:
+        if key == c['key']:
+            return oauth.Consumer(key=key, secret=c['secret'])
+    return None
+    
+
+def oauth_protect(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        validate_two_legged_oauth()
+        return f(*args, **kwargs)
+    return decorated_function
+
+
 @app.route('/', methods=['GET', ])
 def index():
     """Welcome page. Just for kicks. Does absolutely nothing."""
@@ -35,7 +90,7 @@ def index():
            'ges/d9ce1e88-eb67-437d-8135-4779a6248cf4/john_lydon01_website_ima' \
            'ge_dywf_wuxga.jpg" style="height: 500px;" />', 200
 
-
+    
 @app.route('/<path:resource>', methods=['GET', ])
 def original(resource):
     """
@@ -46,36 +101,6 @@ def original(resource):
     return _push_file(path,
                       EXT_TO_MIMETYPE[FORMAT_TO_EXT[image.format]],
                       _get_image_headers(image))
-
-
-@app.route('/<path:resource>', methods=['POST', 'PUT', ])
-def create_or_update(resource):
-    """
-    Creates or updates resource. Purges cache if update.
-    """
-    sss = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
-                         app.config['AWS_SECRET_ACCESS_KEY'])
-    bucket = sss.get_bucket(app.config['AWS_BUCKET'])
-    
-    obj = bucket.new_key(resource)
-    obj.set_contents_from_file(request.files['file'])
-    
-    _flush(resource)
-    
-    return 'Created', 201
-
-
-@app.route('/<path:resource>', methods=['DELETE', ])
-def delete(resource):
-    """
-    Deletes resource and any derivatives from system (and cache).
-    """
-    sss = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
-                         app.config['AWS_SECRET_ACCESS_KEY'])
-    bucket = sss.get_bucket(app.config['AWS_BUCKET'])
-    bucket.delete_key(resource)
-    _flush(resource)
-    return '', 204
 
 
 @app.route('/<path:resource>-resized-<int:width>x.<ext>', methods=['GET', ])
@@ -96,7 +121,41 @@ def crop(resource, width=None, height=None, ext=None):
     Resizes and crops resource object per specified qualifiers.
     """
     return _rescale(resource, width, height, ext, True)
+
+
+@app.route('/<path:resource>', methods=['POST', 'PUT', ])
+@oauth_protect
+def create_or_update(resource):
+    """
+    Creates or updates resource. Purges cache if update.
+    """
+    sss = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
+                          app.config['AWS_SECRET_ACCESS_KEY'])
+    bucket = sss.get_bucket(app.config['AWS_BUCKET'])
     
+    obj = bucket.new_key(resource)
+    obj.set_contents_from_file(request.files['file'])
+    
+    _flush(resource)
+    
+    return 'Created', 201
+
+
+@app.route('/<path:resource>', methods=['DELETE', ])
+@oauth_protect
+def delete(resource):
+    """
+    Deletes resource and any derivatives from system (and cache).
+    """
+    sss = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
+                          app.config['AWS_SECRET_ACCESS_KEY'])
+    bucket = sss.get_bucket(app.config['AWS_BUCKET'])
+    bucket.delete_key(resource)
+    
+    _flush(resource)
+    
+    return '', 204
+
     
 def _rescale(resource, width=None, height=None, ext=None, force=False):
     """
@@ -228,10 +287,12 @@ def _flush(resource):
         except Exception, ex:
             pass
 
-    #cloudfront = boto.connect_cloudfront(app.config['AWS_ACCESS_KEY_ID'],
-    #                                     app.config['AWS_SECRET_ACCESS_KEY'])
-    #cloudfront.create_invalidation_request(app.config['AWS_DISTRIBUTION_ID'],
-    #                                          queue)
+    if 'AWS_DISTRIBUTION_ID' in app.config:
+        cloudfront = boto.connect_cloudfront(
+            app.config['AWS_ACCESS_KEY_ID'],
+            app.config['AWS_SECRET_ACCESS_KEY'])
+        cloudfront.create_invalidation_request(
+            app.config['AWS_DISTRIBUTION_ID'], queue)
 
 
 def _push_file(path, mimetype, headers=None):

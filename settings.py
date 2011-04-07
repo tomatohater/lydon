@@ -8,3 +8,7 @@ AWS_DISTRIBUTION_ID = 'YOUR_CLOUDFRONT_DISTRO_ID'
 
 LYDON_WORKING_DIR = 'YOUR_WORKING_DIRECTORY'
 LYDON_CACHE_TIMEOUT = 60*60*24*365*10  # 10 years
+
+LYDON_OAUTH_KEYS = [{'key': 'CONSUMER_KEY_1',
+                     'secret': 'CONSUMER_SECRET_1',
+                     'namespace': 'NAMESPACE_1'}, ]
