@@ -35,10 +35,11 @@ oauth_server = oauth.Server(
     signature_methods={'HMAC-SHA1': oauth.SignatureMethod_HMAC_SHA1()}
 )
 
-def validate_two_legged_oauth():
+def _validate_auth():
     """
     Verify 2-legged oauth request. Parameters accepted as values in
     "Authorization" header, or as a GET request or in a POST body.
+    AND confirm
     """
     auth_header = {}
     if 'Authorization' in request.headers:
@@ -51,29 +52,26 @@ def validate_two_legged_oauth():
         parameters=dict([(k, v) for k, v in request.values.iteritems()]))
  
     try:
-        oauth_server.verify_request(req,
-            _get_consumer(req.get_parameter('oauth_consumer_key')),
-            None)
-        return True
-    except oauth.Error, e:
-        raise abort(403)
-    except KeyError, e:
-        raise abort(403)
-    except Exception, e:
+        consumer, namespace = _get_consumer(
+            req.get_parameter('oauth_consumer_key'))
+        oauth_server.verify_request(req, consumer, None)
+        return request.path.startswith('/%s/' % namespace)
+        
+    except (oauth.Error, KeyError, Exception):
         raise abort(403)
         
 
 def _get_consumer(key):
     for c in app.config["LYDON_OAUTH_KEYS"]:
         if key == c['key']:
-            return oauth.Consumer(key=key, secret=c['secret'])
+            return oauth.Consumer(key=key, secret=c['secret']), c['namespace']
     return None
     
 
-def oauth_protect(f):
+def protect(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        validate_two_legged_oauth()
+        _validate_auth()
         return f(*args, **kwargs)
     return decorated_function
 
@@ -119,7 +117,7 @@ def crop(resource, width=None, height=None, ext=None):
 
 
 @app.route('/<path:resource>', methods=['POST', 'PUT', ])
-@oauth_protect
+@protect
 def create_or_update(resource):
     """
     Creates or updates resource. Purges cache if update.
@@ -137,7 +135,7 @@ def create_or_update(resource):
 
 
 @app.route('/<path:resource>', methods=['DELETE', ])
-@oauth_protect
+@protect
 def delete(resource):
     """
     Deletes resource and any derivatives from system (and cache).
@@ -321,7 +319,3 @@ def _reduce_fraction(numerator, denominator):
     numerator /= greatest
     denominator /= greatest
     return numerator, denominator
-
-
-if __name__ == '__main__':
-    app.run()
