@@ -7,12 +7,11 @@ from functools import wraps
 import boto
 import oauth2 as oauth
 from flask import Flask, request, send_file, abort
-from werkzeug.exceptions import Unauthorized
 from PIL import Image
 
 
 app = Flask(__name__)
-app.config.from_object('settings')
+app.config.from_object('lydon.settings')
 app.config.from_envvar('LYDON_SETTINGS')
 
 
@@ -57,15 +56,11 @@ def validate_two_legged_oauth():
             None)
         return True
     except oauth.Error, e:
-        raise Unauthorized(e)
+        raise abort(403)
     except KeyError, e:
-        raise Unauthorized("You failed to supply the " \
-                           "necessary parameters (%s) to " \
-                           "properly authenticate" % e)
+        raise abort(403)
     except Exception, e:
-        raise Unauthorized("You failed to supply the " \
-                           "necessary parameters to " \
-                           "properly authenticate")
+        raise abort(403)
         
 
 def _get_consumer(key):
