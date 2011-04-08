@@ -37,9 +37,10 @@ oauth_server = oauth.Server(
 
 def _validate_auth():
     """
-    Verify 2-legged oauth request. Parameters accepted as values in
-    "Authorization" header, or as a GET request or in a POST body.
-    AND confirm
+    Verifies 2-legged oauth request and namespace
+    
+    Parameters accepted as values in "Authorization" header, or as a GET request
+    or in a POST body.
     """
     auth_header = {}
     if 'Authorization' in request.headers:
@@ -52,13 +53,19 @@ def _validate_auth():
         parameters=dict([(k, v) for k, v in request.values.iteritems()]))
  
     try:
-        consumer, namespace = _get_consumer(
-            req.get_parameter('oauth_consumer_key'))
-        oauth_server.verify_request(req, consumer, None)
-        return request.path.startswith('/%s/' % namespace)
+        consumer_key = req.get_parameter('oauth_consumer_key')
+        consumer, namespace = _get_consumer(consumer_key)
         
+        # verify oauth
+        oauth_server.verify_request(req, consumer, None)
+        
+        # verify namespace
+        if not request.path.startswith('/%s/' % namespace):
+            raise Exception
+        
+        return True
     except (oauth.Error, KeyError, Exception):
-        raise abort(403)
+        raise abort(401)
         
 
 def _get_consumer(key):
@@ -116,7 +123,7 @@ def crop(resource, width=None, height=None, ext=None):
     return _rescale(resource, width, height, ext, True)
 
 
-@app.route('/<path:resource>', methods=['POST', 'PUT', ])
+@app.route('/<path:resource>', methods=['PUT', ])
 @protect
 def create_or_update(resource):
     """
