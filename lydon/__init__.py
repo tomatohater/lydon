@@ -2,12 +2,13 @@
 Generate thumbnails on the fly.
 """
 import os
+import cStringIO
 from functools import wraps
 
 import boto
 import oauth2 as oauth
-from flask import Flask, request, send_file, abort
 from PIL import Image
+from flask import Flask, request, send_file, abort
 
 
 app = Flask(__name__)
@@ -30,14 +31,14 @@ EXT_TO_MIMETYPE = {
     'png': 'image/png',
 }
 
-
 oauth_server = oauth.Server(
     signature_methods={'HMAC-SHA1': oauth.SignatureMethod_HMAC_SHA1()}
 )
 
+
 def _validate_auth():
     """
-    Verifies 2-legged oauth request and namespace
+    Verifies 2-legged oauth request and resource namespace.
     
     Parameters accepted as values in "Authorization" header, or as a GET request
     or in a POST body.
@@ -96,9 +97,10 @@ def original(resource):
     """
     With no qualifiers, just returns resource object... with enhanced headers.
     """
-    path = _get_resource_file(resource)
-    image = Image.open(path)
-    return _push_file(path,
+    resource_file = _get_resource_file(resource)
+    image = Image.open(resource_file)
+    
+    return _push_file(resource_file,
                       EXT_TO_MIMETYPE[FORMAT_TO_EXT[image.format]],
                       _get_image_headers(image))
 
@@ -138,7 +140,7 @@ def create_or_update(resource):
     
     _flush(resource)
     
-    return 'Created', 201
+    return request.base_url, 201, {'Location': request.base_url }
 
 
 @app.route('/<path:resource>', methods=['DELETE', ])
@@ -190,15 +192,10 @@ def _rescale(resource, width=None, height=None, ext=None, force=False):
                             y_offset+int(crop_height)))
         image = image.resize((dst_width, dst_height), Image.ANTIALIAS)
 
-    path = os.path.join(_get_working_directory(), 'derivatives',
-                        request.path[1:])
-    path_dir = os.path.dirname(path)
-    if not os.path.exists(path_dir):
-        os.makedirs(path_dir)
+    resource_file = cStringIO.StringIO()
+    image.save(resource_file, EXT_TO_FORMAT[ext])
     
-    image.save(path, EXT_TO_FORMAT[ext])
-    
-    return _push_file(path, EXT_TO_MIMETYPE[ext], _get_image_headers(image))
+    return _push_file(resource_file, EXT_TO_MIMETYPE[ext], _get_image_headers(image))
     
 
 def _populate_inputs(resource, width=None, height=None, ext=None):
@@ -218,10 +215,6 @@ def _get_resource_file(resource):
     """
     Pulls resource file from S3 into working directory.
     """
-    path = _get_local_file_path(resource)
-    if os.path.exists(path):
-        return path
-
     sss = boto.connect_s3(app.config['AWS_ACCESS_KEY_ID'],
                          app.config['AWS_SECRET_ACCESS_KEY'])
     bucket = sss.get_bucket(app.config['AWS_BUCKET'])
@@ -230,13 +223,11 @@ def _get_resource_file(resource):
     if not key:
         abort(404)
 
-    path_dir = os.path.dirname(path)
-    if not os.path.exists(path_dir):
-        os.makedirs(path_dir)
-
-    key.get_contents_to_filename(path)
-
-    return path
+    resource_file = cStringIO.StringIO()
+    key.get_contents_to_file(resource_file)
+    resource_file.seek(0)
+    
+    return resource_file
 
 
 def _get_local_file_path(resource):
@@ -269,6 +260,7 @@ def _flush(resource):
     """
     Flushes local and cached versions of resource and derivatives.
     """
+    '''
     queue = ['lydon/%s' % resource, ]
     
     try:
@@ -293,11 +285,12 @@ def _flush(resource):
             app.config['AWS_SECRET_ACCESS_KEY'])
         cloudfront.create_invalidation_request(
             app.config['AWS_DISTRIBUTION_ID'], queue)
+    '''
 
-
-def _push_file(path, mimetype, headers=None):
+def _push_file(resource_file, mimetype, headers=None):
     """Pushes file stream to browser."""
-    response = send_file(path, mimetype=mimetype, add_etags=False,
+    resource_file.seek(0)
+    response = send_file(resource_file, mimetype=mimetype, add_etags=False,
                          cache_timeout=app.config["LYDON_CACHE_TIMEOUT"])
     if headers:
         for header, value in headers.iteritems():
