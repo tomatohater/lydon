@@ -76,7 +76,7 @@ def _get_consumer(key):
     return None
     
 
-def protect(f):
+def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         _validate_auth()
@@ -95,7 +95,7 @@ def index():
 @app.route('/<path:resource>', methods=['GET', ])
 def original(resource):
     """
-    With no qualifiers, just returns resource object... with enhanced headers.
+    Returns original resource... with enhanced headers!
     """
     resource_file = _get_resource_file(resource)
     image = Image.open(resource_file)
@@ -126,7 +126,7 @@ def crop(resource, width=None, height=None, ext=None):
 
 
 @app.route('/<path:resource>', methods=['PUT', ])
-@protect
+@require_auth
 def create_or_update(resource):
     """
     Creates or updates resource. Purges cache if update.
@@ -135,16 +135,27 @@ def create_or_update(resource):
                           app.config['AWS_SECRET_ACCESS_KEY'])
     bucket = sss.get_bucket(app.config['AWS_BUCKET'])
     
-    obj = bucket.new_key(resource)
-    obj.set_contents_from_file(request.files['file'])
+    created = False
+    obj = bucket.get_key(resource)
+    if not obj:
+        created = True
+        obj = bucket.new_key(resource)
+    
+    resource_file = cStringIO.StringIO()
+    resource_file.write(request.data)
+    resource_file.seek(0)
+    
+    obj.set_contents_from_file(resource_file)
     
     _flush(resource)
     
-    return request.base_url, 201, {'Location': request.base_url }
+    response_code = 201 if created else 200
+    
+    return request.base_url, response_code, {'Location': request.base_url }
 
 
 @app.route('/<path:resource>', methods=['DELETE', ])
-@protect
+@require_auth
 def delete(resource):
     """
     Deletes resource and any derivatives from system (and cache).
@@ -303,12 +314,20 @@ def _reduce_fraction(numerator, denominator):
     """
     Reduces fractions.
     """
+    try:
+        # Try built-in support for Python 2.6+
+        from fractions import Fraction
+        reduced = Fraction(numerator, denominator)
+        return reduced.numerator, reduced.denominator
+    except ImportError:
+        pass
+    
     def _gcd(numerator, denominator):
         """
         Calculates greatest common denominator.
         """
         while denominator != 0:
-            temp = numerator
+            temp = denominator
             denominator = numerator % denominator
             numerator = temp
         return numerator
